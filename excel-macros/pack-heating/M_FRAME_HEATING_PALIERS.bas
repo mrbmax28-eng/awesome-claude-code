@@ -41,9 +41,20 @@ Option Explicit
 '   7. Export IGES propose.
 '
 ' Aucun modele Creo n'est modifie par ce module.
+'
+' 2026.10.05.09 (pack pilote) :
+'   - pieces porteuses reconnues avec les MEMES regles que le module
+'     pieds moteurs (TECH_PUB_EstModeleRoll / TECH_PUB_EstModeleMoteur) :
+'     un rouleau equipe d'un pied a forcement son palier ;
+'   - arret si un composant n'est pas charge dans Creo (liste nommee) ;
+'   - HEAT_PalPlacerAuto, HEAT_PalControlerAuto, HEAT_PalInventaire :
+'     memes traitements sans fenetre, pour M_PILOTE_HEATING ;
+'   - controle : rouleau porte par un sous-assemblage (son pied se calerait
+'     sur un autre squelette) et repere ROLL dans un squelette = KO.
+' Necessite Module_Ajout_Pieces_Techniques V18 et M_FRAME_HEATING du pack.
 ' ================================================================
 
-Private Const PAL_VERSION As String = "2026.10.05.08"
+Private Const PAL_VERSION As String = "2026.10.05.09"
 Private Const PAL_ERR As Long = vbObjectError + 8200
 Private Const PAL_FEUILLE As String = "PALIERS_HEATING"
 Private Const PAL_LIGNE_DONNEES As Long = 7
@@ -66,6 +77,13 @@ Private Const PAL_NIV_LAST As Long = 206
 Private Const PAL_CALC_FIRST As Long = 7
 Private Const PAL_CALC_LAST As Long = 86
 Private Const PAL_MSG_MAX As Long = 760
+' Configuration du pilote : chemin de l'assemblage moteur (regles moteur).
+Private Const PAL_FEUILLE_PILOTE As String = "PILOTE_HEATING"
+Private Const PAL_CELLULE_MOTEUR As String = "C6"
+
+' Bilan du dernier parcours (PalParcourir).
+Private m_PalNonCharges As String
+Private m_PalReperesSquelette As Long
 
 Public Sub HEAT_VersionPaliers()
     MsgBox "M_FRAME_HEATING_PALIERS version " & PAL_VERSION, _
@@ -73,6 +91,160 @@ Public Sub HEAT_VersionPaliers()
 End Sub
 
 Public Sub HEAT_PlacerPaliersRouleaux()
+    Dim message As String
+    PalPlacer False, True, message
+End Sub
+
+' Pilote : placement sans fenetre (sauf la confirmation si confirmer).
+' Pas d'export IGES ici : le pilote l'enchaine.
+Public Function HEAT_PalPlacerAuto(ByVal confirmer As Boolean, _
+    ByRef message As String) As Boolean
+    HEAT_PalPlacerAuto = PalPlacer(True, confirmer, message)
+End Function
+
+Public Function HEAT_PalVersionTexte() As String
+    HEAT_PalVersionTexte = PAL_VERSION
+End Function
+
+' Pilote : inventaire avant tout traitement, sans rien modifier.
+' Vrai si l'inventaire a pu etre fait ; nbBloquants = problemes qui
+' empecheraient des paliers et des pieds justes ; texte = compte rendu.
+Public Function HEAT_PalInventaire(ByRef nbBloquants As Long, _
+    ByRef texte As String) As Boolean
+    Dim session As pfcls.IpfcBaseSession
+    Dim modele As pfcls.IpfcModel
+    Dim asm As pfcls.IpfcAssembly
+    Dim solide As pfcls.IpfcSolid
+    Dim squelette As pfcls.IpfcSolid
+    Dim pose As pfcls.IpfcTransform3D
+    Dim nomSquelette As String
+    Dim ids As pfcls.Iintseq
+    Dim rouleaux As Collection
+    Dim ignores As Long
+    Dim reperesAsm As Long
+    Dim nbSousAsm As Long
+    Dim listeSousAsm As String
+    Dim i As Long
+
+    On Error GoTo Echec
+    nbBloquants = 0
+    texte = ""
+    Set session = PalSession()
+    Set modele = session.GetActiveModel()
+    If modele Is Nothing Then Err.Raise PAL_ERR + 1, , "Aucun modele actif dans Creo."
+    If modele.Type <> pfcls.EpfcMDL_ASSEMBLY Then Err.Raise PAL_ERR + 2, , _
+        "Le modele actif doit etre l'assemblage HEATING (.asm)."
+    Set asm = modele
+    Set solide = modele
+    PalAjouterLigne texte, "Assemblage actif : " & modele.Filename
+    If Not PalEstHeating(modele.Filename) Then
+        nbBloquants = nbBloquants + 1
+        PalAjouterLigne texte, "KO  " & modele.Filename & " n'est pas reconnu comme " & _
+            "l'assemblage HEATING (nom ou ZONES_FOUR!X8)."
+    End If
+    PalExigerMillimetres solide, modele.Filename
+    If PalPoseSquelette(session, asm, solide, squelette, nomSquelette, pose) Then
+        PalAjouterLigne texte, "OK  squelette " & nomSquelette & " (Y " & _
+            PalFmt(PalOrigine(pose, 1)) & " mm dans l'assemblage)"
+    Else
+        nbBloquants = nbBloquants + 1
+        PalAjouterLigne texte, "KO  aucun squelette dans " & modele.Filename & _
+            " : le creer (HEAT_CreerSqueletteCreo) avant de lancer le pilote."
+    End If
+
+    Set rouleaux = New Collection
+    Set ids = New pfcls.Cintseq
+    reperesAsm = PalCompterReperesAsm(modele)
+    PalDebutParcours
+    PalParcourir session, asm, solide, ids, 0, rouleaux, ignores, reperesAsm, _
+        modele.Filename
+    If ignores > 0 Then
+        nbBloquants = nbBloquants + 1
+        PalAjouterLigne texte, "KO  " & ignores & " composant(s) non charge(s) : " & _
+            PalCouper(m_PalNonCharges, 300)
+    Else
+        PalAjouterLigne texte, "OK  tous les composants sont charges"
+    End If
+    If m_PalReperesSquelette > 0 Then
+        nbBloquants = nbBloquants + 1
+        PalAjouterLigne texte, "KO  " & m_PalReperesSquelette & _
+            " repere(s) ROLL dans un squelette (a supprimer)"
+    End If
+    If rouleaux.Count = 0 Then
+        nbBloquants = nbBloquants + 1
+        PalAjouterLigne texte, "KO  aucun repere ROLL_CENTER dans les pieces"
+    Else
+        PalAjouterLigne texte, "OK  " & rouleaux.Count & " repere(s) ROLL_CENTER trouves"
+    End If
+    For i = 1 To rouleaux.Count
+        If StrComp(PalChampTexte(rouleaux, i, 6), modele.Filename, vbTextCompare) <> 0 Then
+            nbSousAsm = nbSousAsm + 1
+            If nbSousAsm <= 3 Then
+                If listeSousAsm <> "" Then listeSousAsm = listeSousAsm & ", "
+                listeSousAsm = listeSousAsm & LCase$(PalBase(PalChampTexte(rouleaux, i, 0))) & _
+                    " dans " & PalChampTexte(rouleaux, i, 6)
+            End If
+        End If
+    Next i
+    If nbSousAsm > 0 Then
+        nbBloquants = nbBloquants + 1
+        PalAjouterLigne texte, "KO  " & nbSousAsm & " rouleau(x) porte(s) par un " & _
+            "sous-assemblage : leur pied se calerait sur un autre squelette que " & _
+            "celui des paliers (" & listeSousAsm & IIf(nbSousAsm > 3, ", ...", "") & ")"
+    End If
+    If reperesAsm > 0 Then PalAjouterLigne texte, "ALERTE  " & reperesAsm & _
+        " repere(s) ROLL_CENTER poses dans un assemblage : ignores par les deux modules"
+    HEAT_PalInventaire = True
+    Exit Function
+Echec:
+    nbBloquants = nbBloquants + 1
+    PalAjouterLigne texte, "KO  inventaire interrompu : " & Err.Description
+End Function
+
+' Pilote : le squelette de l'assemblage actif correspond-il aux niveaux
+' Excel (Niveaux_HEATING, hors paliers) ? d = decalage Excel -> Creo.
+Public Function HEAT_PalDecalageMesurable(ByRef d As Double, _
+    ByRef probleme As String) As Boolean
+    Dim session As pfcls.IpfcBaseSession
+    Dim modele As pfcls.IpfcModel
+    Dim asm As pfcls.IpfcAssembly
+    Dim solide As pfcls.IpfcSolid
+    Dim squelette As pfcls.IpfcSolid
+    Dim pose As pfcls.IpfcTransform3D
+    Dim nomSquelette As String
+    Dim lignes As Collection
+    Dim autres As Long
+    Dim nbRef As Long
+
+    On Error GoTo Echec
+    probleme = ""
+    Set session = PalSession()
+    Set modele = session.GetActiveModel()
+    If modele Is Nothing Then Err.Raise PAL_ERR + 1, , "Aucun modele actif dans Creo."
+    If modele.Type <> pfcls.EpfcMDL_ASSEMBLY Then Err.Raise PAL_ERR + 2, , _
+        "Le modele actif doit etre l'assemblage HEATING (.asm)."
+    Set asm = modele
+    Set solide = modele
+    If Not PalPoseSquelette(session, asm, solide, squelette, nomSquelette, pose) Then
+        probleme = "aucun squelette dans " & modele.Filename & "."
+        Exit Function
+    End If
+    Set lignes = PalLignesSquelette(squelette, pose, autres)
+    HEAT_PalDecalageMesurable = PalMesurerDecalage(lignes, d, nbRef, probleme)
+    If HEAT_PalDecalageMesurable Then probleme = "squelette " & nomSquelette & _
+        " a jour (" & nbRef & " niveau(x) retrouve(s), d = " & PalFmt(d) & " mm)."
+    Exit Function
+Echec:
+    probleme = Err.Description
+End Function
+
+Private Sub PalAjouterLigne(ByRef texte As String, ByVal ligne As String)
+    If texte <> "" Then texte = texte & vbCrLf
+    texte = texte & ligne
+End Sub
+
+Private Function PalPlacer(ByVal auto As Boolean, ByVal confirmer As Boolean, _
+    ByRef message As String) As Boolean
     Dim session As pfcls.IpfcBaseSession
     Dim modele As pfcls.IpfcModel
     Dim asm As pfcls.IpfcAssembly
@@ -130,6 +302,8 @@ Public Sub HEAT_PlacerPaliersRouleaux()
     Dim errTexte As String
 
     On Error GoTo Echec
+    message = ""
+    If auto Then HEAT_DefinirSilencieux True
 
     etape = "Preparation des feuilles HEATING"
     HEAT_Initialiser
@@ -146,10 +320,12 @@ Public Sub HEAT_PlacerPaliersRouleaux()
         "Le modele actif doit etre l'assemblage HEATING (.asm)."
     nomAssemblage = modele.Filename
     If Not PalEstHeating(nomAssemblage) Then
+        If auto Then Err.Raise PAL_ERR + 5, , "Le modele actif " & nomAssemblage & _
+            " n'est pas reconnu comme l'assemblage HEATING (ZONES_FOUR!X8)."
         If MsgBox("Le modele actif est " & nomAssemblage & "." & vbCrLf & _
             "Il n'est pas reconnu comme l'assemblage HEATING." & vbCrLf & _
             "Les Y seront lus dans le repere de cet assemblage. Continuer ?", _
-            vbYesNo + vbQuestion, "Paliers HEATING") <> vbYes Then Exit Sub
+            vbYesNo + vbQuestion, "Paliers HEATING") <> vbYes Then GoTo Abandon
     End If
     Set asm = modele
     Set solide = modele
@@ -169,6 +345,9 @@ Public Sub HEAT_PlacerPaliersRouleaux()
             origineDecalage = "mesure sur " & nbReferences & " niveau(x) du squelette " & _
                 nomSquelette
         Else
+            If auto Then Err.Raise PAL_ERR + 63, , _
+                "Decalage Excel -> Creo impossible a mesurer dans " & nomSquelette & _
+                " : " & probleme & " Recharger l'IGES dans le squelette puis relancer."
             If MsgBox("Decalage Excel -> Creo impossible a mesurer dans " & _
                 nomSquelette & " :" & vbCrLf & probleme & vbCrLf & vbCrLf & _
                 "Solution sure : NON, puis HEAT_Recalculer, export IGES, recharger " & _
@@ -176,7 +355,7 @@ Public Sub HEAT_PlacerPaliersRouleaux()
                 "OUI = continuer avec la seule position du squelette (Y " & _
                 PalFmt(decalageSquelette) & " mm)." & vbCrLf & _
                 "NON = arreter sans rien modifier", vbYesNo + vbExclamation, _
-                "Paliers HEATING") <> vbYes Then Exit Sub
+                "Paliers HEATING") <> vbYes Then GoTo Abandon
             decalageY = decalageSquelette
             origineDecalage = "NON MESURE : position du squelette seule"
         End If
@@ -186,7 +365,18 @@ Public Sub HEAT_PlacerPaliersRouleaux()
     Set rouleaux = New Collection
     Set ids = New pfcls.Cintseq
     reperesAsm = PalCompterReperesAsm(modele)
-    PalParcourir session, asm, solide, ids, 0, rouleaux, ignores, reperesAsm
+    PalDebutParcours
+    PalParcourir session, asm, solide, ids, 0, rouleaux, ignores, reperesAsm, _
+        nomAssemblage
+    ' Aucun rouleau ne doit echapper aux paliers : tout doit etre charge.
+    If ignores > 0 Then Err.Raise PAL_ERR + 6, , ignores & _
+        " composant(s) non charge(s) dans Creo : " & PalCouper(m_PalNonCharges, 400) & _
+        ". Ouvrir " & nomAssemblage & " avec tous ses composants, puis relancer. " & _
+        "Rien n'a ete modifie."
+    If m_PalReperesSquelette > 0 Then Err.Raise PAL_ERR + 7, , _
+        m_PalReperesSquelette & " repere(s) ROLL_CENTER dans un squelette : le " & _
+        "module moteur y poserait un rouleau. Les supprimer du squelette. " & _
+        "Rien n'a ete modifie."
     If rouleaux.Count = 0 Then Err.Raise PAL_ERR + 3, , _
         "Aucun repere ROLL_CENTER / ROLLn_CENTER dans les pieces de " & _
         nomAssemblage & "."
@@ -249,18 +439,21 @@ Public Sub HEAT_PlacerPaliersRouleaux()
     feuillePrise = True
     PalEcrireProposition ws, rouleaux, ys, idx, debutGroupe, finGroupe, _
         nbGroupes, nomAssemblage, yRef, yPalier, distance, actif, offGroupe
+    choix = vbYes
+    If confirmer Then
     ws.Activate
     choix = MsgBox(PalTexteConfirmation(rouleaux, idx, debutGroupe, finGroupe, _
         nbGroupes, yRef, yPalier, actif, abaisse, offGroupe, ignores, _
         reperesAsm, nomAssemblage, aSquelette, bottomY, decalageY, _
         origineDecalage), _
         vbYesNo + vbQuestion, "Paliers HEATING - verification")
+    End If
     If choix <> vbYes Then
         PalRestaurerFeuille ws, feuilleAvant, "ARRETE par l'utilisateur"
         feuillePrise = False
-        MsgBox "Arret demande : rien n'a ete modifie.", _
-            vbInformation, "Paliers HEATING"
-        Exit Sub
+        message = "Arret demande a la confirmation : rien n'a ete modifie."
+        If Not auto Then MsgBox message, vbInformation, "Paliers HEATING"
+        GoTo Abandon
     End If
 
     etape = "Ecriture de NiveauxY_HEATING"
@@ -278,11 +471,11 @@ Public Sub HEAT_PlacerPaliersRouleaux()
             "ANNULE : HEATING non recalcule"
         instantanePris = False
         feuillePrise = False
-        MsgBox "Le recalcul HEATING a echoue avec les paliers (message precedent)." & _
-            vbCrLf & "NiveauxY_HEATING est remis dans son etat initial et " & _
-            "HEATING a ete recalcule tel qu'avant.", _
-            vbExclamation, "Paliers HEATING"
-        Exit Sub
+        message = "Le recalcul HEATING a echoue avec les paliers (" & _
+            HEAT_DerniereErreur() & "). NiveauxY_HEATING est remis dans son etat " & _
+            "initial et HEATING a ete recalcule tel qu'avant."
+        If Not auto Then MsgBox message, vbExclamation, "Paliers HEATING"
+        GoTo Abandon
     End If
 
     etape = "Verification de Niveaux_HEATING"
@@ -290,13 +483,25 @@ Public Sub HEAT_PlacerPaliersRouleaux()
         PalAnnuler niveaux, instantane, ws, feuilleAvant, "ANNULE : " & probleme
         instantanePris = False
         feuillePrise = False
-        MsgBox "Verification apres recalcul : " & probleme & vbCrLf & vbCrLf & _
-            "NiveauxY_HEATING est remis dans son etat initial et HEATING " & _
-            "a ete recalcule tel qu'avant.", vbExclamation, "Paliers HEATING"
-        Exit Sub
+        message = "Verification apres recalcul : " & probleme & _
+            " NiveauxY_HEATING est remis dans son etat initial et HEATING " & _
+            "a ete recalcule tel qu'avant."
+        If Not auto Then MsgBox message, vbExclamation, "Paliers HEATING"
+        GoTo Abandon
     End If
     instantanePris = False
     feuillePrise = False
+
+    message = nbActifs & " palier(s) a " & PalFmt(PAL_DISTANCE_PALIER) & _
+        " mm sous le rouleau le plus bas de leur groupe (d = " & PalFmt(decalageY) & _
+        " mm, " & origineDecalage & "). " & n & " rouleau(x), " & nbGroupes & _
+        " groupe(s), " & nbDesactives & " niveau(x) desactive(s)" & _
+        IIf(nbDesactives > 0, " : " & PalCouper(listeDesactives, 300), "") & "."
+    PalPlacer = True
+    If auto Then
+        HEAT_DefinirSilencieux False
+        Exit Function
+    End If
 
     If MsgBox(nbActifs & " palier(s) place(s) a " & PalFmt(PAL_DISTANCE_PALIER) & _
         " mm sous le rouleau le plus bas de leur groupe" & _
@@ -311,7 +516,12 @@ Public Sub HEAT_PlacerPaliersRouleaux()
         vbYesNo + vbQuestion, "Paliers HEATING") = vbYes Then
         HEAT_ExporterAxesIGES
     End If
-    Exit Sub
+    Exit Function
+
+Abandon:
+    If auto Then HEAT_DefinirSilencieux False
+    If message = "" Then message = "Arret demande : rien n'a ete modifie."
+    Exit Function
 
 Echec:
     errNumero = Err.Number
@@ -324,15 +534,16 @@ Echec:
         If recalcLance Then HEAT_Recalculer
     End If
     If feuillePrise Then PalRestaurerFeuille ws, feuilleAvant, "ANNULE : " & etape
+    If auto Then HEAT_DefinirSilencieux False
     On Error GoTo 0
-    MsgBox "Paliers HEATING interrompus." & vbCrLf & _
-        "Etape : " & etape & vbCrLf & _
+    message = "Etape : " & etape & vbCrLf & _
         "Erreur : " & CStr(errNumero) & vbCrLf & errTexte & _
-        IIf(instantanePris, vbCrLf & vbCrLf & _
+        IIf(instantanePris, vbCrLf & _
             "NiveauxY_HEATING a ete remis dans son etat initial" & _
-            IIf(recalcLance, " et HEATING recalcule.", "."), ""), _
+            IIf(recalcLance, " et HEATING recalcule.", "."), "")
+    If Not auto Then MsgBox "Paliers HEATING interrompus." & vbCrLf & message, _
         vbCritical, "Paliers HEATING"
-End Sub
+End Function
 
 Private Sub PalAnnuler(ByVal niveaux As Worksheet, ByRef instantane As Variant, _
     ByVal ws As Worksheet, ByRef feuilleAvant As Variant, ByVal texte As String)
@@ -373,6 +584,14 @@ Private Sub PalExigerMillimetres(ByVal solide As pfcls.IpfcSolid, _
         nom & " : unite de longueur " & unite.name & " ; millimetres requis."
 End Sub
 
+Private Sub PalDebutParcours()
+    m_PalNonCharges = ""
+    m_PalReperesSquelette = 0
+End Sub
+
+' Parcours de l'assemblage : memes regles que le module pieds moteurs
+' (assemblages moteurs sautes, rouleaux Roll/ROLL_D ignores, toute autre
+' piece portant un repere ROLL est une piece porteuse).
 Private Sub PalParcourir(ByVal session As pfcls.IpfcBaseSession, _
     ByVal racine As pfcls.IpfcAssembly, _
     ByVal courant As pfcls.IpfcSolid, _
@@ -380,7 +599,8 @@ Private Sub PalParcourir(ByVal session As pfcls.IpfcBaseSession, _
     ByVal profondeur As Long, _
     ByVal rouleaux As Collection, _
     ByRef ignores As Long, _
-    ByRef reperesAsm As Long)
+    ByRef reperesAsm As Long, _
+    ByVal nomCourant As String)
 
     Dim features As pfcls.IpfcFeatures
     Dim feature As pfcls.IpfcFeature
@@ -390,6 +610,7 @@ Private Sub PalParcourir(ByVal session As pfcls.IpfcBaseSession, _
     Dim enfant As pfcls.Iintseq
     Dim solideEnfant As pfcls.IpfcSolid
     Dim base As String
+    Dim nomManquant As String
     Dim i As Long
 
     If profondeur > 32 Then Err.Raise PAL_ERR + 10, , _
@@ -407,19 +628,32 @@ Private Sub PalParcourir(ByVal session As pfcls.IpfcBaseSession, _
         On Error GoTo 0
         If modele Is Nothing Then
             ignores = ignores + 1
+            nomManquant = ""
+            On Error Resume Next
+            nomManquant = composant.ModelDescr.GetFileName()
+            Err.Clear
+            On Error GoTo 0
+            If nomManquant = "" Then nomManquant = "composant ID " & item.id
+            If m_PalNonCharges <> "" Then m_PalNonCharges = m_PalNonCharges & ", "
+            m_PalNonCharges = m_PalNonCharges & nomManquant & " (dans " & nomCourant & ")"
         Else
             Set enfant = PalCopierIds(ids, item.id)
             base = UCase$(PalBase(modele.Filename))
             If modele.Type = pfcls.EpfcMDL_ASSEMBLY Then
-                If Not PalEstMoteur(base) Then
+                If Not PalEstMoteur(modele.Filename) Then
                     reperesAsm = reperesAsm + PalCompterReperesAsm(modele)
                     Set solideEnfant = modele
                     PalParcourir session, racine, solideEnfant, enfant, _
-                        profondeur + 1, rouleaux, ignores, reperesAsm
+                        profondeur + 1, rouleaux, ignores, reperesAsm, modele.Filename
                 End If
             ElseIf modele.Type = pfcls.EpfcMDL_PART Then
-                If Not PalPieceIgnoree(modele, base) Then
-                    PalLireReperes racine, modele, enfant, rouleaux
+                If TECH_PUB_EstModeleRoll(modele.Filename) Then
+                    ' Rouleau ajoute par le module moteur : pas une piece porteuse.
+                ElseIf PalEstSquelette(modele) Then
+                    m_PalReperesSquelette = m_PalReperesSquelette + _
+                        PalCompterReperesAsm(modele)
+                Else
+                    PalLireReperes racine, modele, enfant, rouleaux, nomCourant
                 End If
             End If
         End If
@@ -454,9 +688,10 @@ End Function
 Private Sub PalLireReperes(ByVal racine As pfcls.IpfcAssembly, _
     ByVal modele As pfcls.IpfcModel, _
     ByVal ids As pfcls.Iintseq, _
-    ByVal rouleaux As Collection)
+    ByVal rouleaux As Collection, _
+    ByVal proprietaire As String)
 
-    Dim proprietaire As pfcls.IpfcModelItemOwner
+    Dim possesseur As pfcls.IpfcModelItemOwner
     Dim items As pfcls.IpfcModelItems
     Dim item As pfcls.IpfcModelItem
     Dim csys As pfcls.IpfcCoordSystem
@@ -467,8 +702,8 @@ Private Sub PalLireReperes(ByVal racine As pfcls.IpfcAssembly, _
     Dim nom As String
     Dim i As Long
 
-    Set proprietaire = modele
-    Set items = proprietaire.ListItems(pfcls.EpfcITEM_COORD_SYS)
+    Set possesseur = modele
+    Set items = possesseur.ListItems(pfcls.EpfcITEM_COORD_SYS)
     If items Is Nothing Then Exit Sub
     For i = 0 To items.Count - 1
         Set item = items.item(i)
@@ -487,7 +722,8 @@ Private Sub PalLireReperes(ByVal racine As pfcls.IpfcAssembly, _
             Set csys = item
             Set point = transfo.TransformPoint(csys.CoordSys.GetOrigin())
             PalAjouterRouleau rouleaux, modele.Filename, nom, _
-                CDbl(point.item(0)), CDbl(point.item(1)), CDbl(point.item(2)), ids
+                CDbl(point.item(0)), CDbl(point.item(1)), CDbl(point.item(2)), ids, _
+                proprietaire
         End If
     Next i
 End Sub
@@ -495,7 +731,7 @@ End Sub
 Private Sub PalAjouterRouleau(ByVal rouleaux As Collection, _
     ByVal fichier As String, ByVal repere As String, _
     ByVal x As Double, ByVal y As Double, ByVal z As Double, _
-    ByVal ids As pfcls.Iintseq)
+    ByVal ids As pfcls.Iintseq, ByVal proprietaire As String)
 
     Dim i As Long
     Dim chemin As String
@@ -512,7 +748,8 @@ Private Sub PalAjouterRouleau(ByVal rouleaux As Collection, _
         If chemin <> "" Then chemin = chemin & "/"
         chemin = chemin & CStr(ids.item(i))
     Next i
-    rouleaux.Add Array(fichier, repere, x, y, z, chemin)
+    ' 6 = assemblage proprietaire : celui dont le squelette donne le pied.
+    rouleaux.Add Array(fichier, repere, x, y, z, chemin, proprietaire)
 End Sub
 
 Private Function PalCopierIds(ByVal ids As pfcls.Iintseq, _
@@ -549,32 +786,31 @@ Private Function PalEstRepereRoll(ByVal nom As String) As Boolean
     PalEstRepereRoll = True
 End Function
 
-Private Function PalPieceIgnoree(ByVal modele As pfcls.IpfcModel, _
-    ByVal base As String) As Boolean
-
+Private Function PalEstSquelette(ByVal modele As pfcls.IpfcModel) As Boolean
     Dim objet As Object
-    Dim squelette As Boolean
-
-    ' Rouleaux et pieds ajoutes par Ajout_Pieces_Techniques : leur
-    ' ROLL_CENTER double celui de la piece porteuse.
-    If base = "ROLL" Or Left$(base, 6) = "ROLL_D" Or _
-        Left$(base, 5) = "FTF_H" Or Left$(base, 5) = "MCP_H" Or _
-        Left$(base, 5) = "AMF_H" Or Left$(base, 3) = "SK_" Then
-        PalPieceIgnoree = True
-        Exit Function
-    End If
     On Error Resume Next
     Set objet = modele
-    squelette = CBool(objet.IsSkeleton)
+    PalEstSquelette = CBool(objet.IsSkeleton)
     Err.Clear
     On Error GoTo 0
-    PalPieceIgnoree = squelette
 End Function
 
-Private Function PalEstMoteur(ByVal base As String) As Boolean
-    PalEstMoteur = Left$(base, 5) = "FTM_H" Or Left$(base, 5) = "MCA_H" Or _
-        Left$(base, 5) = "AMC_H" Or Left$(base, 17) = "ASSEMBLAGE_MOTEUR" Or _
-        Left$(base, 18) = "30002434__SR18_DU0"
+' Memes regles que le module pieds moteurs (source unique).
+Private Function PalEstMoteur(ByVal fichier As String) As Boolean
+    PalEstMoteur = TECH_PUB_EstModeleMoteur(fichier, PalFichierMoteur())
+End Function
+
+Private Function PalFichierMoteur() As String
+    Dim chemin As String
+    Dim p As Long
+    On Error Resume Next
+    chemin = Trim$(PalTexte(ThisWorkbook.Worksheets(PAL_FEUILLE_PILOTE). _
+        Range(PAL_CELLULE_MOTEUR).value))
+    Err.Clear
+    On Error GoTo 0
+    p = InStrRev(Replace(chemin, "/", "\"), "\")
+    If p > 0 Then chemin = Mid$(chemin, p + 1)
+    PalFichierMoteur = chemin
 End Function
 
 Private Function PalEstHeating(ByVal fichier As String) As Boolean
@@ -1639,14 +1875,20 @@ Private Function PalLigneSousPoint(ByVal lignes As Collection, _
     Dim i As Long
     Dim a As Variant
     Dim trouve As Boolean
+    Dim impact As Double
     For i = 1 To lignes.Count
         a = lignes.item(i)
+        impact = 1E+30
         If PalCroiseVerticale(a, x) Then
-            If a(2) < y - 0.01 Then
-                If Not trouve Or a(2) > yLigne Then
-                    yLigne = a(2)
-                    trouve = True
-                End If
+            impact = a(2)
+        ElseIf a(0) = "Y" Then
+            ' Poteau dans la verticale : le module moteur retient son sommet.
+            If Abs(a(1) - x) <= PAL_TOL_LIGNE Then impact = a(5)
+        End If
+        If impact < y - 0.01 Then
+            If Not trouve Or impact > yLigne Then
+                yLigne = impact
+                trouve = True
             End If
         End If
     Next i
@@ -1694,6 +1936,20 @@ End Function
 ' ---------------------------------------------------------------- Controle
 
 Public Sub HEAT_ControlerSqueletteHeating()
+    Dim nbKO As Long
+    Dim resume As String
+    PalControlerTout False, nbKO, resume
+End Sub
+
+' Pilote : controle sans fenetre. Vrai si le controle a pu aller au bout ;
+' nbKO = nombre de KO bloquants (les ALERTE ne bloquent pas).
+Public Function HEAT_PalControlerAuto(ByRef nbKO As Long, _
+    ByRef resume As String) As Boolean
+    HEAT_PalControlerAuto = PalControlerTout(True, nbKO, resume)
+End Function
+
+Private Function PalControlerTout(ByVal silencieux As Boolean, ByRef nbKO As Long, _
+    ByRef resume As String) As Boolean
     Dim session As pfcls.IpfcBaseSession
     Dim modele As pfcls.IpfcModel
     Dim asm As pfcls.IpfcAssembly
@@ -1756,6 +2012,8 @@ Public Sub HEAT_ControlerSqueletteHeating()
     Dim etape As String
 
     On Error GoTo Echec
+    nbKO = 0
+    resume = ""
     Set rapport = New Collection
 
     etape = "Lecture Excel"
@@ -1792,11 +2050,10 @@ Public Sub HEAT_ControlerSqueletteHeating()
         ox = PalOrigine(pose, 0): oy = PalOrigine(pose, 1): oz = PalOrigine(pose, 2)
         rapport.Add Array("Position du squelette " & nomSquelette, "0 ; 0 ; 0", _
             PalFmt(ox) & " ; " & PalFmt(oy) & " ; " & PalFmt(oz), "", _
-            IIf(Abs(ox) + Abs(oy) + Abs(oz) <= 0.01, "OK", "KO"), _
+            IIf(Abs(ox) + Abs(oy) + Abs(oz) <= 0.01, "OK", "ALERTE"), _
             IIf(Abs(ox) + Abs(oy) + Abs(oz) <= 0.01, "Squelette a l'origine de l'assemblage.", _
-            "Squelette decale dans l'assemblage : toutes ses lignes (paliers compris) " & _
-            "sont decalees d'autant. Le squelette doit etre a l'origine, comme le " & _
-            "cree HEAT_CreerSqueletteCreo."))
+            "Squelette decale dans l'assemblage : toutes ses lignes sont decalees " & _
+            "d'autant. Les paliers le compensent (decalage mesure) ; ne plus le deplacer."))
         Set lignes = PalLignesSquelette(squelette, pose, autres)
         ' Decalage reel Excel -> Creo (position du squelette + export IGES).
         dCtl = oy
@@ -1805,7 +2062,7 @@ Public Sub HEAT_ControlerSqueletteHeating()
         rapport.Add Array("Decalage Excel -> Creo (niveaux retrouves)", "0", _
             IIf(dMesure, PalFmt(dCtl), "non mesurable"), _
             IIf(dMesure, PalFmt(dCtl), ""), _
-            IIf(dMesure And Abs(dCtl) <= PAL_TOL_SQUELETTE, "OK", "KO"), _
+            IIf(dMesure, IIf(Abs(dCtl) <= PAL_TOL_SQUELETTE, "OK", "ALERTE"), "KO"), _
             IIf(dMesure, IIf(Abs(dCtl) <= PAL_TOL_SQUELETTE, _
             "Les niveaux Excel sont a la meme hauteur dans Creo.", _
             "Les niveaux Excel sont " & PalFmt(dCtl) & " mm plus haut dans Creo " & _
@@ -1876,7 +2133,7 @@ Public Sub HEAT_ControlerSqueletteHeating()
                     rapport.Add Array("Cadre autour de l'assemblage en " & nomAxe, _
                         "assemblage " & PalFmt(envMin(k)) & " a " & PalFmt(envMax(k)), _
                         "cadre " & PalFmt(crMin(k)) & " a " & PalFmt(crMax(k)), _
-                        PalFmt(centreCadre - centreEnv), IIf(entoure, "OK", "KO"), _
+                        PalFmt(centreCadre - centreEnv), IIf(entoure, "OK", "ALERTE"), _
                         IIf(entoure, "Le cadre entoure l'assemblage.", _
                         "Le cadre est decale de " & PalFmt(centreCadre - centreEnv) & _
                         " mm en " & nomAxe & " par rapport au centre de l'assemblage."))
@@ -1892,8 +2149,39 @@ Public Sub HEAT_ControlerSqueletteHeating()
     Set rouleaux = New Collection
     Set ids = New pfcls.Cintseq
     reperesAsm = PalCompterReperesAsm(modele)
-    PalParcourir session, asm, solide, ids, 0, rouleaux, ignores, reperesAsm
+    PalDebutParcours
+    PalParcourir session, asm, solide, ids, 0, rouleaux, ignores, reperesAsm, _
+        modele.Filename
     nR = rouleaux.Count
+    rapport.Add Array("Composants charges dans Creo", "tous", _
+        IIf(ignores = 0, "tous", ignores & " non charge(s)"), "", _
+        IIf(ignores = 0, "OK", "KO"), IIf(ignores = 0, _
+        "Tous les composants sont charges : aucun rouleau oublie.", _
+        "Non charges (rouleaux non verifies) : " & PalCouper(m_PalNonCharges, 400)))
+    rapport.Add Array("Reperes ROLL dans un squelette", "0", _
+        CStr(m_PalReperesSquelette), "", IIf(m_PalReperesSquelette = 0, "OK", "KO"), _
+        IIf(m_PalReperesSquelette = 0, "Aucun.", _
+        "Le module moteur poserait un rouleau sur le squelette : supprimer ces reperes."))
+    If nR > 0 Then
+        nbFaux = 0
+        listeFaux = ""
+        For i = 1 To nR
+            If StrComp(PalChampTexte(rouleaux, i, 6), modele.Filename, vbTextCompare) <> 0 Then
+                nbFaux = nbFaux + 1
+                If nbFaux <= 3 Then
+                    If listeFaux <> "" Then listeFaux = listeFaux & ", "
+                    listeFaux = listeFaux & LCase$(PalBase(PalChampTexte(rouleaux, i, 0))) & _
+                        " dans " & PalChampTexte(rouleaux, i, 6)
+                End If
+            End If
+        Next i
+        rapport.Add Array("Rouleaux portes directement par " & modele.Filename, _
+            CStr(nR), CStr(nR - nbFaux), "", IIf(nbFaux = 0, "OK", "KO"), _
+            IIf(nbFaux = 0, "Les pieds se caleront sur le squelette HEATING (paliers).", _
+            nbFaux & " rouleau(x) dans un sous-assemblage : leur pied se calerait sur " & _
+            "le squelette de ce sous-assemblage, pas sur les paliers. " & listeFaux & _
+            IIf(nbFaux > 3, ", ...", "")))
+    End If
     If nR > 0 And aSquelette Then
         ReDim ys(1 To nR)
         ReDim idx(1 To nR)
@@ -1967,14 +2255,17 @@ Public Sub HEAT_ControlerSqueletteHeating()
         "Reperes poses dans un assemblage et non dans une piece : ignores par les paliers.")
 
     etape = "Ecriture du rapport"
-    PalEcrireRapport rapport, modele.Filename
-    Exit Sub
+    PalEcrireRapport rapport, modele.Filename, silencieux, nbKO, resume
+    PalControlerTout = True
+    Exit Function
 
 Echec:
-    MsgBox "Controle HEATING interrompu." & vbCrLf & "Etape : " & etape & _
-        vbCrLf & "Erreur : " & CStr(Err.Number) & vbCrLf & Err.Description, _
-        vbCritical, "Controle HEATING"
-End Sub
+    resume = "Controle interrompu. Etape : " & etape & " ; erreur " & _
+        CStr(Err.Number) & " : " & Err.Description
+    If Not silencieux Then MsgBox "Controle HEATING interrompu." & vbCrLf & _
+        "Etape : " & etape & vbCrLf & "Erreur : " & CStr(Err.Number) & vbCrLf & _
+        Err.Description, vbCritical, "Controle HEATING"
+End Function
 
 ' Explication d'une distance rouleau -> premiere ligne differente de 1500.
 Private Function PalCauseEcart(ByVal lignes As Collection, ByVal x As Double, _
@@ -1997,13 +2288,12 @@ Private Function PalCauseEcart(ByVal lignes As Collection, ByVal x As Double, _
     End If
 End Function
 
-Private Sub PalEcrireRapport(ByVal rapport As Collection, ByVal nomAssemblage As String)
+Private Sub PalEcrireRapport(ByVal rapport As Collection, ByVal nomAssemblage As String, _
+    ByVal silencieux As Boolean, ByRef nbKO As Long, ByRef texteKO As String)
     Dim ws As Worksheet
     Dim ligne As Long
     Dim e As Variant
     Dim k As Long
-    Dim nbKO As Long
-    Dim texteKO As String
 
     On Error Resume Next
     Set ws = ThisWorkbook.Worksheets("CONTROLE_HEATING")
@@ -2019,6 +2309,7 @@ Private Sub PalEcrireRapport(ByVal rapport As Collection, ByVal nomAssemblage As
     ws.Range("A1").value = "Controle du squelette HEATING dans " & nomAssemblage & _
         " - " & Format$(Now, "yyyy-mm-dd hh:nn") & " (aucune modification, version " & _
         PAL_VERSION & ")"
+    ws.Range("A2").value = "KO = bloquant (a corriger). ALERTE = a connaitre, ne bloque pas."
     ws.Range("A3:F3").value = Array("Controle", "Attendu", "Mesure dans Creo", _
         "Ecart (mm)", "Resultat", "Explication")
     ws.Range("A3:F3").Font.Bold = True
@@ -2041,11 +2332,12 @@ Private Sub PalEcrireRapport(ByVal rapport As Collection, ByVal nomAssemblage As
     ws.Columns("A:E").AutoFit
     ws.Columns("F").ColumnWidth = 90
     ws.Columns("F").WrapText = True
+    If silencieux Then Exit Sub
     ws.Activate
     If nbKO = 0 Then
-        MsgBox "Squelette HEATING conforme : cadre autour de l'assemblage et " & _
-            "paliers a " & PalFmt(PAL_DISTANCE_PALIER) & " mm.", vbInformation, _
-            "Controle HEATING"
+        MsgBox "Aucun KO bloquant : paliers a " & PalFmt(PAL_DISTANCE_PALIER) & _
+            " mm sous les rouleaux, squelette a jour. Voir les ALERTE eventuelles " & _
+            "dans CONTROLE_HEATING.", vbInformation, "Controle HEATING"
     Else
         MsgBox nbKO & " probleme(s) :" & vbCrLf & vbCrLf & texteKO & vbCrLf & _
             "Detail : feuille CONTROLE_HEATING.", vbExclamation, "Controle HEATING"
