@@ -175,7 +175,7 @@ End Sub
 Public Sub PILOTE_2_ControleEtPieds()
     Dim rapport As String
     Dim message As String
-    Dim resume As String
+    Dim bilan As String
     Dim nbKO As Long
     Dim etape As String
     Dim nomAssemblage As String
@@ -191,13 +191,13 @@ Public Sub PILOTE_2_ControleEtPieds()
     nomAssemblage = PilNomAssemblageActif()
 
     etape = "Controle des paliers dans Creo"
-    If Not HEAT_PalControlerAuto(nbKO, resume) Then
-        PilArret "PHASE 2", etape, resume
+    If Not HEAT_PalControlerAuto(nbKO, bilan) Then
+        PilArret "PHASE 2", etape, bilan
         Exit Sub
     End If
     If nbKO > 0 Then
         PilArret "PHASE 2", etape, nbKO & " KO bloquant(s) dans CONTROLE_HEATING :" & _
-            vbCrLf & PilCouper(resume, 600) & vbCrLf & _
+            vbCrLf & PilCouper(bilan, 600) & vbCrLf & _
             "Le plus souvent : IGES non recharge dans le squelette. Le recharger, " & _
             "regenerer, puis relancer PILOTE_2."
         ThisWorkbook.Worksheets("CONTROLE_HEATING").Activate
@@ -214,16 +214,16 @@ Public Sub PILOTE_2_ControleEtPieds()
     PilJournal "PHASE 2", etape, "OK", Replace(message, vbCrLf, " ; ")
 
     etape = "Controle final des pieds"
-    If Not PilControlerPieds(nomAssemblage, resume) Then
-        PilArret "PHASE 2", etape, resume
+    If Not PilControlerPieds(nomAssemblage, bilan) Then
+        PilArret "PHASE 2", etape, bilan
         Exit Sub
     End If
-    PilJournal "PHASE 2", etape, "OK", resume
+    PilJournal "PHASE 2", etape, "OK", bilan
 
     PilEtat "TERMINE " & Format$(Now, "yyyy-mm-dd hh:nn") & _
         " : paliers et pieds verifies", PilTexte(ws.Range("C10").value)
     ThisWorkbook.Save
-    MsgBox "HEATING termine et verifie." & vbCrLf & vbCrLf & resume & vbCrLf & vbCrLf & _
+    MsgBox "HEATING termine et verifie." & vbCrLf & vbCrLf & bilan & vbCrLf & vbCrLf & _
         Replace(message, vbCrLf & vbCrLf, vbCrLf), vbInformation, "Pilote HEATING"
     Exit Sub
 Echec:
@@ -290,12 +290,12 @@ Private Function PilPreVol(ByVal phase As String, ByRef rapport As String) As Bo
 End Function
 
 Private Sub PilVerifierVersion(ByRef rapport As String, ByRef nbBloquants As Long, _
-    ByVal module As String, ByVal trouvee As String, ByVal attendue As String)
+    ByVal nomModule As String, ByVal trouvee As String, ByVal attendue As String)
     If StrComp(trouvee, attendue, vbTextCompare) = 0 Then
-        PilLigne rapport, "OK  " & module & " " & trouvee
+        PilLigne rapport, "OK  " & nomModule & " " & trouvee
     Else
         nbBloquants = nbBloquants + 1
-        PilLigne rapport, "KO  " & module & " " & trouvee & " importe, " & attendue & _
+        PilLigne rapport, "KO  " & nomModule & " " & trouvee & " importe, " & attendue & _
             " attendu : supprimer l'ancien module puis importer celui du pack"
     End If
 End Sub
@@ -303,7 +303,7 @@ End Sub
 ' Apres le module moteur : chaque rouleau HEATING a son moteur, son pied,
 ' et ce pied descend jusqu'au palier de son groupe (quand il en a un).
 Private Function PilControlerPieds(ByVal nomAssemblage As String, _
-    ByRef resume As String) As Boolean
+    ByRef bilan As String) As Boolean
     Dim etat As Worksheet
     Dim pal As Worksheet
     Dim r As Long
@@ -326,18 +326,18 @@ Private Function PilControlerPieds(ByVal nomAssemblage As String, _
     Dim nomRouleau As String
     Dim faute As String
 
-    resume = ""
+    bilan = ""
     On Error Resume Next
     Set etat = ThisWorkbook.Worksheets(PIL_ETAT_TECH)
     Set pal = ThisWorkbook.Worksheets(PIL_FEUILLE_PALIERS)
     Err.Clear
     On Error GoTo 0
     If etat Is Nothing Then
-        resume = "Feuille " & PIL_ETAT_TECH & " absente : le module moteur n'a rien enregistre."
+        bilan = "Feuille " & PIL_ETAT_TECH & " absente : le module moteur n'a rien enregistre."
         Exit Function
     End If
     If pal Is Nothing Then
-        resume = "Feuille " & PIL_FEUILLE_PALIERS & " absente : relancer PILOTE_1."
+        bilan = "Feuille " & PIL_FEUILLE_PALIERS & " absente : relancer PILOTE_1."
         Exit Function
     End If
     If PilNumerique(pal.Range("C5").value) Then decalage = CDbl(pal.Range("C5").value)
@@ -400,17 +400,17 @@ Private Function PilControlerPieds(ByVal nomAssemblage As String, _
     Next r
 
     If nbLignes <> nbAttendus Then
-        resume = nbLignes & " rouleau(x) equipe(s) dans " & nomAssemblage & " pour " & _
+        bilan = nbLignes & " rouleau(x) equipe(s) dans " & nomAssemblage & " pour " & _
             nbAttendus & " detecte(s) par les paliers : une piece a ete oubliee ou " & _
             "comptee deux fois. Comparer " & PIL_ETAT_TECH & " et " & PIL_FEUILLE_PALIERS & "."
-        If nbFaux > 0 Then resume = resume & vbCrLf & liste
+        If nbFaux > 0 Then bilan = bilan & vbCrLf & liste
         Exit Function
     End If
     If nbFaux > 0 Then
-        resume = nbFaux & " rouleau(x) incorrect(s) sur " & nbLignes & " :" & vbCrLf & liste
+        bilan = nbFaux & " rouleau(x) incorrect(s) sur " & nbLignes & " :" & vbCrLf & liste
         Exit Function
     End If
-    resume = nbLignes & " rouleau(x) equipe(s) d'un moteur " & cote & " ; " & _
+    bilan = nbLignes & " rouleau(x) equipe(s) d'un moteur " & cote & " ; " & _
         nbSurPalier & " pied(s) poses sur leur palier, les autres sur la charpente " & _
         "(groupes sans palier)."
     PilControlerPieds = True

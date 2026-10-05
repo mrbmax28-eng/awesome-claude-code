@@ -802,10 +802,11 @@ End Function
 
 Private Function PalFichierMoteur() As String
     Dim chemin As String
+    Dim feuille As Worksheet
     Dim p As Long
     On Error Resume Next
-    chemin = Trim$(PalTexte(ThisWorkbook.Worksheets(PAL_FEUILLE_PILOTE). _
-        Range(PAL_CELLULE_MOTEUR).value))
+    Set feuille = ThisWorkbook.Worksheets(PAL_FEUILLE_PILOTE)
+    If Not feuille Is Nothing Then chemin = Trim$(PalTexte(feuille.Range(PAL_CELLULE_MOTEUR).value))
     Err.Clear
     On Error GoTo 0
     p = InStrRev(Replace(chemin, "/", "\"), "\")
@@ -1937,19 +1938,19 @@ End Function
 
 Public Sub HEAT_ControlerSqueletteHeating()
     Dim nbKO As Long
-    Dim resume As String
-    PalControlerTout False, nbKO, resume
+    Dim bilan As String
+    PalControlerTout False, nbKO, bilan
 End Sub
 
 ' Pilote : controle sans fenetre. Vrai si le controle a pu aller au bout ;
 ' nbKO = nombre de KO bloquants (les ALERTE ne bloquent pas).
 Public Function HEAT_PalControlerAuto(ByRef nbKO As Long, _
-    ByRef resume As String) As Boolean
-    HEAT_PalControlerAuto = PalControlerTout(True, nbKO, resume)
+    ByRef bilan As String) As Boolean
+    HEAT_PalControlerAuto = PalControlerTout(True, nbKO, bilan)
 End Function
 
 Private Function PalControlerTout(ByVal silencieux As Boolean, ByRef nbKO As Long, _
-    ByRef resume As String) As Boolean
+    ByRef bilan As String) As Boolean
     Dim session As pfcls.IpfcBaseSession
     Dim modele As pfcls.IpfcModel
     Dim asm As pfcls.IpfcAssembly
@@ -2013,7 +2014,7 @@ Private Function PalControlerTout(ByVal silencieux As Boolean, ByRef nbKO As Lon
 
     On Error GoTo Echec
     nbKO = 0
-    resume = ""
+    bilan = ""
     Set rapport = New Collection
 
     etape = "Lecture Excel"
@@ -2255,12 +2256,12 @@ Private Function PalControlerTout(ByVal silencieux As Boolean, ByRef nbKO As Lon
         "Reperes poses dans un assemblage et non dans une piece : ignores par les paliers.")
 
     etape = "Ecriture du rapport"
-    PalEcrireRapport rapport, modele.Filename, silencieux, nbKO, resume
+    PalEcrireRapport rapport, modele.Filename, silencieux, nbKO, bilan
     PalControlerTout = True
     Exit Function
 
 Echec:
-    resume = "Controle interrompu. Etape : " & etape & " ; erreur " & _
+    bilan = "Controle interrompu. Etape : " & etape & " ; erreur " & _
         CStr(Err.Number) & " : " & Err.Description
     If Not silencieux Then MsgBox "Controle HEATING interrompu." & vbCrLf & _
         "Etape : " & etape & vbCrLf & "Erreur : " & CStr(Err.Number) & vbCrLf & _
