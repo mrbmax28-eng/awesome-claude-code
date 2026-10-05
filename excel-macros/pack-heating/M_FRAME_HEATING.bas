@@ -283,8 +283,8 @@ Public Sub HEAT_Recalculer()
                 "La colonne double requiert au moins deux niveaux HEATING actifs."
             phase = "validation de AT:AW8 et BI:BJ8"
             ' Ne pas regrouper ces appels dans une grande expression VBA :
-            ' certaines versions d'Excel renvoient l'erreur 16 « Expression
-            ' too complex » lorsque plusieurs proprietes Range sont combinees.
+            ' certaines versions d'Excel renvoient l'erreur 16 "Expression
+            ' too complex" lorsque plusieurs proprietes Range sont combinees.
             If Not IsNumeric(.Range("AT8").value) Then _
                 Err.Raise HEAT_ERR + 62, , "ZONES_FOUR!AT8 doit etre numerique."
             If Not IsNumeric(.Range("AU8").value) Then _
