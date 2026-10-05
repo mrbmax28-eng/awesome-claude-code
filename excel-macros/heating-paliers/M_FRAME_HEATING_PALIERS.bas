@@ -15,8 +15,14 @@ Option Explicit
 '
 '   1. Lecture des reperes ROLL_CENTER / ROLLn_CENTER des pieces de
 '      HEATING (sous-assemblages compris), dans le repere de heating.asm.
-'   2. Arret si le squelette HEATING n'est pas a Y = 0 dans heating.asm :
-'      le palier serait decale d'autant (cause des 3194 mm / -194 mm).
+'   2. Mesure, dans Creo, du decalage d entre le Y Excel et le Y reel du
+'      squelette dans heating.asm : les niveaux deja calcules
+'      (Niveaux_HEATING, paliers exclus) sont retrouves parmi les lignes
+'      horizontales du squelette. d couvre la position du squelette et tout
+'      decalage de l'export IGES. Y palier Excel = Y rouleau - 1500 - d :
+'      le palier est a 1500 mm SOUS le centre dans Creo, quel que soit d.
+'      (Sans compensation, un d de 1694 mm donnait le palier 194 mm
+'      au-dessus du rouleau.)
 '   3. Groupes : rouleaux a 2000 mm maxi du plus bas du groupe. Un rouleau
 '      seul rejoint le groupe le plus proche. Reference du palier = le
 '      rouleau le plus bas du groupe FINAL (rouleau seul compris) : aucun
@@ -37,7 +43,7 @@ Option Explicit
 ' Aucun modele Creo n'est modifie par ce module.
 ' ================================================================
 
-Private Const PAL_VERSION As String = "2026.10.05.07"
+Private Const PAL_VERSION As String = "2026.10.05.08"
 Private Const PAL_ERR As Long = vbObjectError + 8200
 Private Const PAL_FEUILLE As String = "PALIERS_HEATING"
 Private Const PAL_LIGNE_DONNEES As Long = 7
@@ -89,6 +95,11 @@ Public Sub HEAT_PlacerPaliersRouleaux()
     Dim nomSquelette As String
     Dim aSquelette As Boolean
     Dim decalageSquelette As Double
+    Dim decalageY As Double
+    Dim nbReferences As Long
+    Dim lignesSq As Collection
+    Dim autresSq As Long
+    Dim origineDecalage As String
     Dim actif() As Boolean
     Dim nbActifs As Long
     Dim distance() As Double
@@ -145,22 +156,30 @@ Public Sub HEAT_PlacerPaliersRouleaux()
     PalExigerMillimetres solide, nomAssemblage
 
     ' Les ROLL_CENTER sont lus dans le repere de l'assemblage, les paliers
-    ' sont ecrits dans le repere du squelette (Excel). Les deux ne sont
-    ' egaux que si le squelette est a Y = 0 : sinon arret, car le palier
-    ' tomberait a 1500 - decalage sous le rouleau.
-    etape = "Position du squelette dans " & nomAssemblage
+    ' sont ecrits en Y Excel. Le decalage d entre les deux est MESURE dans
+    ' le squelette, puis compense : Y palier Excel = Y rouleau - 1500 - d.
+    etape = "Mesure du decalage Excel -> Creo dans " & nomAssemblage
+    decalageY = 0#
+    origineDecalage = "pas de squelette : d = 0 suppose (squelette a creer a l'origine)"
     aSquelette = PalPoseSquelette(session, asm, solide, squelette, nomSquelette, pose)
     If aSquelette Then
         decalageSquelette = PalOrigine(pose, 1)
-        If Abs(decalageSquelette) > PAL_TOL_SQUELETTE Then Err.Raise PAL_ERR + 62, , _
-            "Le squelette " & nomSquelette & " est decale de " & _
-            PalFmt(decalageSquelette) & " mm en Y dans " & nomAssemblage & "." & _
-            vbCrLf & "Les paliers seraient a " & _
-            PalFmt(PAL_DISTANCE_PALIER - decalageSquelette) & _
-            " mm sous les rouleaux au lieu de " & PalFmt(PAL_DISTANCE_PALIER) & "." & _
-            vbCrLf & "Remettre le squelette en 0 ; 0 ; 0 dans " & nomAssemblage & _
-            " (comme le cree HEAT_CreerSqueletteCreo), puis relancer. " & _
-            "Rien n'a ete modifie."
+        Set lignesSq = PalLignesSquelette(squelette, pose, autresSq)
+        If PalMesurerDecalage(lignesSq, decalageY, nbReferences, probleme) Then
+            origineDecalage = "mesure sur " & nbReferences & " niveau(x) du squelette " & _
+                nomSquelette
+        Else
+            If MsgBox("Decalage Excel -> Creo impossible a mesurer dans " & _
+                nomSquelette & " :" & vbCrLf & probleme & vbCrLf & vbCrLf & _
+                "Solution sure : NON, puis HEAT_Recalculer, export IGES, recharger " & _
+                "l'IGES dans le squelette et relancer." & vbCrLf & vbCrLf & _
+                "OUI = continuer avec la seule position du squelette (Y " & _
+                PalFmt(decalageSquelette) & " mm)." & vbCrLf & _
+                "NON = arreter sans rien modifier", vbYesNo + vbExclamation, _
+                "Paliers HEATING") <> vbYes Then Exit Sub
+            decalageY = decalageSquelette
+            origineDecalage = "NON MESURE : position du squelette seule"
+        End If
     End If
 
     etape = "Lecture des ROLL_CENTER dans " & nomAssemblage
@@ -194,17 +213,19 @@ Public Sub HEAT_PlacerPaliersRouleaux()
     ReDim actif(1 To nbGroupes)
     nbActifs = 0
     For g = 1 To nbGroupes
-        yHaut(g) = ys(finGroupe(g))
         distance(g) = PAL_DISTANCE_PALIER
-        yPalier(g) = Round(yRef(g) - distance(g), 6)
-        ' Securite reelle : le palier est au moins a la distance voulue
-        ' sous CHAQUE rouleau du groupe, et exactement sous le plus bas.
-        If Abs(yRef(g) - yPalier(g) - distance(g)) > 0.001 Then _
+        ' yRef et ys : repere de l'assemblage. yPalier et yHaut : Y Excel.
+        yHaut(g) = ys(finGroupe(g)) - decalageY
+        yPalier(g) = Round(yRef(g) - distance(g) - decalageY, 6)
+        ' Securite reelle, dans le repere Creo : le palier est exactement a
+        ' la distance voulue SOUS le plus bas, et au moins a cette distance
+        ' sous CHAQUE rouleau du groupe.
+        If Abs(yRef(g) - (yPalier(g) + decalageY) - distance(g)) > 0.001 Then _
             Err.Raise PAL_ERR + 33, , "Controle de securite : distance du palier de '" & _
             PalNomRangee(g, nbGroupes) & "' differente de " & PalFmt(distance(g)) & _
             " mm. Aucune modification faite."
         For i = debutGroupe(g) To finGroupe(g)
-            If ys(i) - yPalier(g) < distance(g) - 0.001 Then Err.Raise PAL_ERR + 34, , _
+            If ys(i) - (yPalier(g) + decalageY) < distance(g) - 0.001 Then Err.Raise PAL_ERR + 34, , _
                 "Controle de securite : le palier de '" & PalNomRangee(g, nbGroupes) & _
                 "' serait a moins de " & PalFmt(distance(g)) & " mm sous " & _
                 PalChampTexte(rouleaux, idx(i), 0) & " (" & _
@@ -231,7 +252,8 @@ Public Sub HEAT_PlacerPaliersRouleaux()
     ws.Activate
     choix = MsgBox(PalTexteConfirmation(rouleaux, idx, debutGroupe, finGroupe, _
         nbGroupes, yRef, yPalier, actif, abaisse, offGroupe, ignores, _
-        reperesAsm, nomAssemblage, aSquelette, bottomY), _
+        reperesAsm, nomAssemblage, aSquelette, bottomY, decalageY, _
+        origineDecalage), _
         vbYesNo + vbQuestion, "Paliers HEATING - verification")
     If choix <> vbYes Then
         PalRestaurerFeuille ws, feuilleAvant, "ARRETE par l'utilisateur"
@@ -246,7 +268,7 @@ Public Sub HEAT_PlacerPaliersRouleaux()
         niveaux.Cells(PAL_NIV_LAST, 5)).Formula
     instantanePris = True
     PalEcrireNiveaux niveaux, yPalier, distance, actif, nbGroupes, lignesOff
-    PalEcrireResultats ws, distance, yPalier, actif, nbGroupes, decalageSquelette
+    PalEcrireResultats ws, distance, yPalier, actif, nbGroupes, decalageY
 
     etape = "Recalcul HEATING"
     recalcLance = True
@@ -836,6 +858,138 @@ Private Function PalPlanifierNiveaux(ByVal a As Worksheet, ByRef yPalier() As Do
     Set PalPlanifierNiveaux = lignes
 End Function
 
+' Decalage d = Y Creo (repere de l'assemblage) - Y Excel, mesure sur les
+' niveaux de Niveaux_HEATING retrouves dans le squelette. Les paliers
+' (PAL_xx de NiveauxY_HEATING) sont exclus : ce sont eux qu'on corrige.
+' Le decalage retenu doit retrouver TOUS les niveaux de reference, et
+' etre unique ; sinon le squelette n'est pas a jour et rien n'est mesure.
+Private Function PalMesurerDecalage(ByVal lignes As Collection, ByRef d As Double, _
+    ByRef nbRef As Long, ByRef probleme As String) As Boolean
+
+    Dim calc As Worksheet
+    Dim saisie As Worksheet
+    Dim refs() As Double
+    Dim nRefs As Long
+    Dim yl() As Double
+    Dim nL As Long
+    Dim r As Long
+    Dim i As Long
+    Dim j As Long
+    Dim k As Long
+    Dim y As Double
+    Dim a As Variant
+    Dim existe As Boolean
+    Dim cand As Double
+    Dim nbOK As Long
+    Dim somme As Double
+    Dim meilleur As Double
+    Dim ecartK As Double
+    Dim nbSol As Long
+    Dim dSol As Double
+
+    probleme = ""
+    nbRef = 0
+    Set calc = ThisWorkbook.Worksheets("Niveaux_HEATING")
+    Set saisie = ThisWorkbook.Worksheets("NiveauxY_HEATING")
+    ReDim refs(1 To PAL_CALC_LAST - PAL_CALC_FIRST + 1)
+    For r = PAL_CALC_FIRST To PAL_CALC_LAST
+        If PalNumerique(calc.Cells(r, 4).value) Then
+            y = CDbl(calc.Cells(r, 4).value)
+            If Not PalEstPalierSaisi(saisie, y) Then
+                nRefs = nRefs + 1
+                refs(nRefs) = y
+            End If
+        End If
+    Next r
+    If nRefs = 0 Then
+        probleme = "aucun niveau calcule (hors paliers) dans Niveaux_HEATING."
+        Exit Function
+    End If
+
+    ' Y distincts des lignes horizontales du squelette.
+    If lignes Is Nothing Then
+        probleme = "squelette sans ligne lisible."
+        Exit Function
+    End If
+    ReDim yl(1 To lignes.Count + 1)
+    For i = 1 To lignes.Count
+        a = lignes.item(i)
+        If a(0) = "X" Or a(0) = "Z" Then
+            existe = False
+            For k = 1 To nL
+                If Abs(yl(k) - a(2)) <= 0.05 Then
+                    existe = True
+                    Exit For
+                End If
+            Next k
+            If Not existe Then
+                nL = nL + 1
+                yl(nL) = a(2)
+            End If
+        End If
+    Next i
+    If nL = 0 Then
+        probleme = "aucune ligne horizontale dans le squelette."
+        Exit Function
+    End If
+
+    ' Le vrai decalage amene le premier niveau sur une des lignes : chaque
+    ' ligne donne un candidat, garde s'il retrouve tous les niveaux.
+    For i = 1 To nL
+        cand = yl(i) - refs(1)
+        nbOK = 0
+        somme = 0#
+        For j = 1 To nRefs
+            meilleur = 1E+30
+            For k = 1 To nL
+                ecartK = yl(k) - (refs(j) + cand)
+                If Abs(ecartK) < Abs(meilleur) Then meilleur = ecartK
+            Next k
+            If Abs(meilleur) <= PAL_TOL_LIGNE Then
+                nbOK = nbOK + 1
+                somme = somme + cand + meilleur
+            End If
+        Next j
+        If nbOK = nRefs Then
+            If nbSol = 0 Then
+                nbSol = 1
+                dSol = somme / nRefs
+            ElseIf Abs(somme / nRefs - dSol) > PAL_TOL_LIGNE Then
+                nbSol = nbSol + 1
+            End If
+        End If
+    Next i
+    If nbSol = 0 Then
+        probleme = "les " & nRefs & " niveau(x) de Niveaux_HEATING ne se retrouvent " & _
+            "pas tous dans le squelette avec un meme decalage : squelette pas a " & _
+            "jour (IGES non recharge) ou axe Y inverse."
+        Exit Function
+    End If
+    If nbSol > 1 Then
+        probleme = "decalage ambigu : " & nRefs & " niveau(x) de reference seulement, " & _
+            "plusieurs decalages possibles."
+        Exit Function
+    End If
+    d = Round(dSol, 3)
+    nbRef = nRefs
+    PalMesurerDecalage = True
+End Function
+
+Private Function PalEstPalierSaisi(ByVal saisie As Worksheet, ByVal y As Double) As Boolean
+    Dim r As Long
+    For r = PAL_NIV_FIRST To PAL_NIV_LAST
+        If UCase$(Left$(Trim$(PalTexte(saisie.Cells(r, 1).value)), Len(PAL_PREFIXE_ID))) = _
+            PAL_PREFIXE_ID Then
+            If PalNumerique(saisie.Cells(r, 3).value) Then
+                If Abs(CDbl(saisie.Cells(r, 3).value) - y) <= PAL_TOL_LIGNE Then
+                    PalEstPalierSaisi = True
+                    Exit Function
+                End If
+            End If
+        End If
+    Next r
+End Function
+
 ' Apres HEAT_Recalculer : chaque palier doit figurer dans Niveaux_HEATING
 ' (colonne D) et aucun niveau calcule ne doit rester entre lui et ses
 ' rouleaux. Couvre un HEATING en mode automatique qui ignorerait
@@ -920,9 +1074,10 @@ Private Function PalFeuille() As Worksheet
     ws.Range("C3").value = PAL_TOLERANCE_DEFAUT
     ws.Range("C3").Interior.ColorIndex = xlNone
     ws.Range("E3:G3").ClearContents
-    ws.Range("A4").value = "Y palier = Y du centre le plus bas du groupe - " & _
-        PalFmt(PAL_DISTANCE_PALIER) & " mm (automatique)."
-    ws.Range("A5").value = "Y du squelette dans l'assemblage au placement (mm)"
+    ws.Range("A4").value = "Y palier Excel = Y du centre le plus bas du groupe - " & _
+        PalFmt(PAL_DISTANCE_PALIER) & " mm - d (d = decalage Excel -> Creo mesure)." & _
+        " Y reference en repere Creo, Y palier en Y Excel."
+    ws.Range("A5").value = "Decalage d Excel -> Creo au placement (mm)"
     ws.Range("A6:K6").value = Array("Groupe", "Nb rouleaux", "Y min", "Y max", _
         "Y reference (rouleau le plus bas du groupe)", "Distance vers le bas (mm)", _
         "Y palier", "ID niveau", "Etat", "Reperes (fichier : repere : Y)", _
@@ -979,12 +1134,12 @@ End Sub
 
 Private Sub PalEcrireResultats(ByVal ws As Worksheet, _
     ByRef distance() As Double, ByRef yPalier() As Double, _
-    ByRef actif() As Boolean, ByVal nb As Long, ByVal decalageSquelette As Double)
+    ByRef actif() As Boolean, ByVal nb As Long, ByVal decalageY As Double)
 
     Dim g As Long
     Dim r As Long
 
-    ws.Range("C5").value = decalageSquelette
+    ws.Range("C5").value = decalageY
     ws.Range("I3").ClearContents
     ws.Range("I3").Interior.ColorIndex = xlNone
     For g = 1 To nb
@@ -1079,18 +1234,25 @@ Private Function PalTexteConfirmation(ByVal rouleaux As Collection, _
     ByRef abaisse() As Boolean, ByRef offGroupe() As String, _
     ByVal ignores As Long, ByVal reperesAsm As Long, _
     ByVal nomAssemblage As String, ByVal aSquelette As Boolean, _
-    ByVal bottomY As Double) As String
+    ByVal bottomY As Double, ByVal decalageY As Double, _
+    ByVal origineDecalage As String) As String
 
     Dim texte As String
     Dim g As Long
 
-    texte = "Rouleaux trouves dans " & nomAssemblage & " :" & vbCrLf
+    texte = "Decalage Excel -> Creo d = " & PalFmt(decalageY) & " mm (" & _
+        origineDecalage & ")." & vbCrLf
+    If Abs(decalageY) > PAL_TOL_SQUELETTE Then texte = texte & _
+        "! Compense : palier a " & PalFmt(PAL_DISTANCE_PALIER) & " mm sous les " & _
+        "rouleaux DANS CREO. Ne plus deplacer ni recreer le squelette." & vbCrLf
+    texte = texte & vbCrLf & "Rouleaux trouves dans " & nomAssemblage & " :" & vbCrLf
     For g = nbGroupes To 1 Step -1
         texte = texte & vbCrLf & UCase$(PalNomRangee(g, nbGroupes)) & _
             " (" & (finGroupe(g) - debutGroupe(g) + 1) & ") : plus bas Y " & _
             PalFmt(yRef(g))
         If actif(g) Then
-            texte = texte & " -> palier Y " & PalFmt(yPalier(g)) & vbCrLf
+            texte = texte & " -> palier Y Excel " & PalFmt(yPalier(g)) & _
+                " (Creo " & PalFmt(yPalier(g) + decalageY) & ")" & vbCrLf
         Else
             texte = texte & " -> PAS DE PALIER (Y " & PalFmt(yPalier(g)) & _
                 " sous le pied " & PalFmt(bottomY) & ")" & vbCrLf
@@ -1107,7 +1269,8 @@ Private Function PalTexteConfirmation(ByVal rouleaux As Collection, _
         " repere(s) ROLL_CENTER pose(s) dans un assemblage : ignore(s), " & _
         "seuls ceux des pieces comptent."
     If Not aSquelette Then texte = texte & vbCrLf & _
-        "Pas encore de squelette : il devra etre cree a l'origine."
+        "Pas encore de squelette : il devra etre cree a l'origine, puis " & _
+        "relancer cette macro pour mesurer d."
     PalTexteConfirmation = PalCouper(texte, PAL_MSG_MAX) & vbCrLf & vbCrLf & _
         "Palier a " & PalFmt(PAL_DISTANCE_PALIER) & " mm sous le rouleau le " & _
         "plus bas de chaque groupe. Detail : feuille " & PAL_FEUILLE & "." & _
@@ -1581,6 +1744,10 @@ Public Sub HEAT_ControlerSqueletteHeating()
     Dim listeFaux As String
     Dim surPalier As Boolean
     Dim nomG As String
+    Dim dCtl As Double
+    Dim nbRefCtl As Long
+    Dim problemeCtl As String
+    Dim dMesure As Boolean
     Dim bottomY As Double, topY As Double, topOK As Boolean, minGap As Double
     Dim nomAxe As String
     Dim centreEnv As Double
@@ -1631,6 +1798,19 @@ Public Sub HEAT_ControlerSqueletteHeating()
             "sont decalees d'autant. Le squelette doit etre a l'origine, comme le " & _
             "cree HEAT_CreerSqueletteCreo."))
         Set lignes = PalLignesSquelette(squelette, pose, autres)
+        ' Decalage reel Excel -> Creo (position du squelette + export IGES).
+        dCtl = oy
+        dMesure = PalMesurerDecalage(lignes, dCtl, nbRefCtl, problemeCtl)
+        If Not dMesure Then dCtl = oy
+        rapport.Add Array("Decalage Excel -> Creo (niveaux retrouves)", "0", _
+            IIf(dMesure, PalFmt(dCtl), "non mesurable"), _
+            IIf(dMesure, PalFmt(dCtl), ""), _
+            IIf(dMesure And Abs(dCtl) <= PAL_TOL_SQUELETTE, "OK", "KO"), _
+            IIf(dMesure, IIf(Abs(dCtl) <= PAL_TOL_SQUELETTE, _
+            "Les niveaux Excel sont a la meme hauteur dans Creo.", _
+            "Les niveaux Excel sont " & PalFmt(dCtl) & " mm plus haut dans Creo " & _
+            "(dont position du squelette " & PalFmt(oy) & " mm). Les paliers le " & _
+            "compensent s'ils ont ete places avec ce meme d."), problemeCtl))
         If lignes.Count = 0 Then
             rapport.Add Array("Lignes du squelette", "", "0", "", "KO", _
                 "Aucune ligne droite lisible dans le squelette.")
@@ -1666,7 +1846,7 @@ Public Sub HEAT_ControlerSqueletteHeating()
             ' Niveaux calcules (Niveaux_HEATING) presents dans le squelette ?
             For r = PAL_CALC_FIRST To PAL_CALC_LAST
                 If PalNumerique(n.Cells(r, 4).value) Then
-                    y = CDbl(n.Cells(r, 4).value) + oy
+                    y = CDbl(n.Cells(r, 4).value) + dCtl
                     If Not PalNiveauPresent(lignes, y) Then
                         nbManquants = nbManquants + 1
                         If nbManquants <= 10 Then manquants = manquants & _
@@ -1706,7 +1886,7 @@ Public Sub HEAT_ControlerSqueletteHeating()
     End If
 
     etape = "Paliers enregistres"
-    If aSquelette Then PalControlerPaliersEnregistres rapport, oy
+    If aSquelette Then PalControlerPaliersEnregistres rapport, dCtl
 
     etape = "Paliers sous les rouleaux"
     Set rouleaux = New Collection
@@ -1728,7 +1908,7 @@ Public Sub HEAT_ControlerSqueletteHeating()
             nomG = PalNomRangee(g, nbGroupes)
             ' Palier attendu, dans le repere de l'assemblage.
             yPalAsm = yRefGroupe(g) - PAL_DISTANCE_PALIER
-            If yPalAsm - oy < bottomY - 0.000001 Then
+            If yPalAsm - dCtl < bottomY - 0.000001 Then
                 rapport.Add Array(nomG, "pas de palier", "", "", "OK", _
                     "Palier sous le pied des poteaux : non cree (regle).")
             ElseIf lignes.Count = 0 Then
@@ -1745,7 +1925,7 @@ Public Sub HEAT_ControlerSqueletteHeating()
                         PalFmt(ecart), IIf(Abs(ecart) <= PAL_TOL_CONTROLE, "OK", "KO"), _
                         "Centre Y " & PalFmt(ys(i)) & " ; ligne Y " & PalFmt(yLigne) & _
                         IIf(Abs(ecart) <= PAL_TOL_CONTROLE, "", " : " & _
-                        PalCauseEcart(lignes, xR, ys(i), yLigne, yPalAsm, oy)))
+                        PalCauseEcart(lignes, xR, ys(i), yLigne, yPalAsm, dCtl)))
                 Else
                     rapport.Add Array(nomG & " : rouleau le plus bas -> premiere ligne dessous", _
                         PalFmt(PAL_DISTANCE_PALIER) & " mm", "aucune ligne", "", "KO", _
@@ -1802,8 +1982,9 @@ Private Function PalCauseEcart(ByVal lignes As Collection, ByVal x As Double, _
     ByVal oy As Double) As String
     If Abs(oy) > PAL_TOL_SQUELETTE And _
         Abs((yCentre - yLigne) - (PAL_DISTANCE_PALIER - oy)) <= PAL_TOL_CONTROLE Then
-        PalCauseEcart = "ecart = decalage du squelette (" & PalFmt(oy) & _
-            " mm). Remettre le squelette en 0;0;0, relancer les paliers, recharger l'IGES."
+        PalCauseEcart = "ecart = decalage Excel -> Creo (" & PalFmt(oy) & _
+            " mm) non compense : relancer HEAT_PlacerPaliersRouleaux (il le mesure), " & _
+            "puis recharger l'IGES."
     ElseIf yLigne > yPalAsm + PAL_TOL_CONTROLE Then
         PalCauseEcart = "une ligne Y " & PalFmt(yLigne) & " est entre le rouleau et " & _
             "le palier Y " & PalFmt(yPalAsm) & " (niveau actif). Relancer les paliers, " & _
@@ -1896,13 +2077,13 @@ Private Sub PalControlerPaliersEnregistres(ByVal rapport As Collection, _
 
     If PalNumerique(ws.Range("C5").value) Then
         oyPlacement = CDbl(ws.Range("C5").value)
-        rapport.Add Array("Squelette : position Y au placement / maintenant", _
+        rapport.Add Array("Decalage Excel -> Creo : au placement / maintenant", _
             PalFmt(oyPlacement), PalFmt(oy), PalFmt(oy - oyPlacement), _
             IIf(Abs(oy - oyPlacement) <= PAL_TOL_SQUELETTE, "OK", "KO"), _
             IIf(Abs(oy - oyPlacement) <= PAL_TOL_SQUELETTE, _
             "Le squelette n'a pas bouge depuis le placement des paliers.", _
             "Le squelette a bouge depuis le placement : tous les paliers sont " & _
-            "decales d'autant. Le remettre en 0;0;0 puis relancer les paliers."))
+            "decales d'autant. Relancer HEAT_PlacerPaliersRouleaux puis recharger l'IGES."))
     End If
 
     derniere = ws.Cells(ws.Rows.Count, 1).End(xlUp).row
@@ -1923,7 +2104,7 @@ Private Sub PalControlerPaliersEnregistres(ByVal rapport As Collection, _
                     PalFmt(yRef - yAsm - dist), IIf(ok, "OK", "KO"), _
                     IIf(ok, PalFmt(yRef - yAsm) & " mm sous le centre.", _
                     IIf(yAsm >= yRef, "PALIER AU-DESSUS DU ROULEAU. ", "") & _
-                    "Relancer HEAT_PlacerPaliersRouleaux avec le squelette en 0;0;0, " & _
+                    "Relancer HEAT_PlacerPaliersRouleaux (il mesure le decalage), " & _
                     "puis recharger l'IGES."))
             End If
         End If
