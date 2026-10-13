@@ -1,0 +1,103 @@
+{
+  "_doc": "Actions d'entrée créées au démarrage (InputSetup). keys : noms OS.find_keycode_from_string, liés en touche PHYSIQUE (position QWERTY : W/A/S/D = Z/Q/S/D sur AZERTY) ; joy_buttons : JoyButton (0=A,1=B,2=X,3=Y,6=Start,9=LB,10=RB,11..14=D-pad haut/bas/gauche/droite) ; joy_axes : [axe, signe] (0=stick G X, 1=stick G Y, 4=LT, 5=RT) ; mouse_buttons : 1=gauche, 2=droite, 4=molette haut, 5=molette bas.",
+  "accelerate": {
+    "keys": [
+      "W",
+      "Up"
+    ],
+    "joy_axes": [
+      [
+        5,
+        1
+      ]
+    ],
+    "deadzone": 0.15
+  },
+  "brake": {
+    "keys": [
+      "S",
+      "Down"
+    ],
+    "joy_axes": [
+      [
+        4,
+        1
+      ]
+    ],
+    "deadzone": 0.15
+  },
+  "steer_left": {
+    "keys": [
+      "A",
+      "Left"
+    ],
+    "joy_axes": [
+      [
+        0,
+        -1
+      ]
+    ],
+    "deadzone": 0.2
+  },
+  "steer_right": {
+    "keys": [
+      "D",
+      "Right"
+    ],
+    "joy_axes": [
+      [
+        0,
+        1
+      ]
+    ],
+    "deadzone": 0.2
+  },
+  "drift": {
+    "keys": [
+      "Space"
+    ],
+    "joy_buttons": [
+      10,
+      2
+    ],
+    "mouse_buttons": [
+      2
+    ]
+  },
+  "turbo": {
+    "keys": [
+      "Shift"
+    ],
+    "joy_buttons": [
+      0
+    ],
+    "mouse_buttons": [
+      1
+    ]
+  },
+  "zoom_in": {
+    "joy_buttons": [
+      11
+    ],
+    "mouse_buttons": [
+      4
+    ]
+  },
+  "zoom_out": {
+    "joy_buttons": [
+      12
+    ],
+    "mouse_buttons": [
+      5
+    ]
+  },
+  "pause": {
+    "keys": [
+      "Escape",
+      "P"
+    ],
+    "joy_buttons": [
+      6
+    ]
+  }
+}

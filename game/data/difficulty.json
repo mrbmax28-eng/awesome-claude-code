@@ -1,0 +1,12 @@
+{
+  "_doc": "Courbe linéaire : stat = base × (1 + per_tier×tier + per_biome×biome_index + per_level×(level − 1)), bornée par max_mult si présent, puis × multiplicateur adaptatif pour les stats listées dans adaptive.applies_to.",
+  "hp": { "per_tier": 0.6, "per_biome": 0.35, "per_level": 0.08 },
+  "speed": { "per_tier": 0.08, "per_biome": 0.05, "per_level": 0.01, "max_mult": 1.8 },
+  "damage": { "per_tier": 0.4, "per_biome": 0.25, "per_level": 0.05 },
+  "adaptive": {
+    "enabled_default": true,
+    "deaths_in_a_row": 3,
+    "reduction": 0.05,
+    "applies_to": ["hp", "speed", "damage"]
+  }
+}

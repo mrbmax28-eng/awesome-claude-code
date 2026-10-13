@@ -1,0 +1,32 @@
+{
+  "_doc": "Ennemis. Stats de base, modulées par difficulty.json. coin_drop = [min, max] inclus.",
+  "scarab": {
+    "display_name": "Scarabée des sables",
+    "biomes": [
+      "desert"
+    ],
+    "base_hp": 40,
+    "base_speed": 7,
+    "contact_damage": 10,
+    "attack_cooldown_s": 0.8,
+    "attack_range": 0.4,
+    "coin_drop": [
+      2,
+      4
+    ],
+    "radius": 0.8,
+    "acceleration": 18,
+    "knockback_resistance": 0.0,
+    "stun_s": 0.45,
+    "hit_invuln_s": 0.3,
+    "separation_radius": 2.0,
+    "separation_strength": 6.0,
+    "spawn_in_s": 0.6,
+    "colors": {
+      "body": "#3f6f8f",
+      "shell": "#2d4f6b",
+      "legs": "#1d2a36"
+    },
+    "knockback_decay": 30
+  }
+}

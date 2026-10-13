@@ -1,0 +1,14 @@
+{
+  "_doc": "Coût du n-ième achat (n ≥ 0) : base × growth^n tant que n ≤ softcap_start ; au-delà base × growth^s × (n / s)^p. Si softcap_exponent est null, p = s × ln(growth) (raccord C1 : même valeur et même pente en n = s). Conversion de fin de run : ferraille = floor(coef × pièces^exponent × mult).",
+  "curves": {
+    "default": { "base": 10, "growth": 1.15, "softcap_start": 50, "softcap_exponent": null },
+    "car_upgrade": { "base": 15, "growth": 1.6, "softcap_start": 50, "softcap_exponent": null }
+  },
+  "run_conversion": {
+    "coef": 1.0,
+    "exponent": 0.85,
+    "victory_mult": 1.25,
+    "defeat_mult": 1.0,
+    "min_coins": 1
+  }
+}

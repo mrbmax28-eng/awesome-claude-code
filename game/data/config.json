@@ -1,0 +1,37 @@
+{
+  "_doc": "Paramètres techniques (non-équilibrage) : sauvegarde, caméra, rendu, run.",
+  "save": {
+    "version": 1,
+    "path": "user://save.json",
+    "autosave_interval_s": 60
+  },
+  "camera": {
+    "pitch_deg": 55,
+    "fov_deg": 40,
+    "distance": 40,
+    "zoom_min": 30,
+    "zoom_max": 52,
+    "zoom_step": 2,
+    "follow_sharpness": 6.0,
+    "lookahead_s": 0.25,
+    "shake_max_offset": 0.6,
+    "shake_max_roll_deg": 1.5,
+    "shake_decay": 1.8,
+    "shake_on_hit": 0.35,
+    "shake_on_kill": 0.2,
+    "shake_on_damage": 0.5
+  },
+  "run": {
+    "victory_end_delay_s": 1.5,
+    "defeat_end_delay_s": 1.2,
+    "default_biome": "desert",
+    "default_vehicle": "car"
+  },
+  "pickups": {
+    "coin_magnet_speed": 20,
+    "coin_scatter_speed": 6,
+    "coin_lifetime_s": 30,
+    "coin_pickup_radius": 1.4,
+    "coin_friction": 10
+  }
+}

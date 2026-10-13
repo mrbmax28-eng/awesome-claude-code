@@ -1,0 +1,123 @@
+{
+  "_doc": "Biomes. 'adaptation' : règles par véhicule (multiplicateurs, défaut 1.0). 'decor' : règles de placement procédural (count [min,max], scale [min,max], min_spacing en m, collide = obstacle physique, collider_radius = rayon du collider en multiple de scale).",
+  "desert": {
+    "order": 0,
+    "display_name": "Désert",
+    "script": "res://scripts/biomes/desert.gd",
+    "palette": {
+      "dominant": "#e8892b",
+      "ground": "#eda95c",
+      "ground_patch": "#e9a453",
+      "sky": "#f7d9a8",
+      "ambient": "#f4d2a0",
+      "sun": "#fff1d6",
+      "rock": "#c06a3a",
+      "rock_dark": "#8e4a2b",
+      "cactus": "#5f9e4a",
+      "cactus_dark": "#3f7434",
+      "dune": "#e59d52",
+      "accent": "#ffe08a",
+      "outline": "#2b1a12"
+    },
+    "arena": {
+      "half_size": 36,
+      "wall_height": 3.5,
+      "wall_rocks_spacing": 4.0,
+      "ground_margin": 90
+    },
+    "spawn_clear_radius": 9,
+    "decor": [
+      {
+        "type": "rock",
+        "count": [
+          12,
+          18
+        ],
+        "scale": [
+          1.2,
+          2.8
+        ],
+        "min_spacing": 5.0,
+        "collide": true,
+        "collider_radius": 0.8
+      },
+      {
+        "type": "cactus",
+        "count": [
+          10,
+          16
+        ],
+        "scale": [
+          0.9,
+          1.5
+        ],
+        "min_spacing": 4.0,
+        "collide": true,
+        "collider_radius": 0.45
+      },
+      {
+        "type": "dune",
+        "count": [
+          8,
+          12
+        ],
+        "scale": [
+          3.0,
+          6.0
+        ],
+        "min_spacing": 7.0,
+        "collide": false,
+        "collider_radius": 0.0
+      },
+      {
+        "type": "pebble",
+        "count": [
+          25,
+          40
+        ],
+        "scale": [
+          0.2,
+          0.5
+        ],
+        "min_spacing": 1.5,
+        "collide": false,
+        "collider_radius": 0.0
+      }
+    ],
+    "enemies": [
+      "scarab"
+    ],
+    "boss_every_levels": 10,
+    "waves": [
+      {
+        "enemy": "scarab",
+        "count": 20,
+        "spawn_interval_s": 0.7,
+        "max_alive": 10,
+        "spawn_min_dist": 14,
+        "first_spawn_delay_s": 0.5
+      }
+    ],
+    "adaptation": {
+      "car": {
+        "speed_mult": 1.0,
+        "resource_mult": 1.0
+      },
+      "buggy": {
+        "speed_mult": 1.0,
+        "resource_mult": 1.3
+      },
+      "tank": {
+        "speed_mult": 0.8,
+        "resource_mult": 1.0
+      }
+    },
+    "lighting": {
+      "sun_pitch_deg": -48,
+      "sun_yaw_deg": 35,
+      "sun_energy": 0.62,
+      "ambient_energy": 0.42,
+      "shadow_opacity": 0.85
+    }
+  }
+}

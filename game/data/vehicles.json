@@ -1,0 +1,77 @@
+{
+  "_doc": "Véhicules. Unités : m, s, degrés. 'upgrades' : améliorations spécifiques (achat en Phase 2), coût via economy.json > curves.",
+  "car": {
+    "tier": 0,
+    "display_name": "Voiture",
+    "scene": "res://scenes/vehicles/car.tscn",
+    "unlock": {
+      "scrap": 0,
+      "crystals": 0
+    },
+    "stats": {
+      "max_hp": 100,
+      "max_speed": 22,
+      "reverse_max_speed": 8,
+      "acceleration": 26,
+      "brake_deceleration": 45,
+      "rolling_drag": 7,
+      "overspeed_decay": 18,
+      "turn_rate_deg": 165,
+      "turn_speed_ref": 7,
+      "grip": 9.0,
+      "drift_grip": 3.0,
+      "drift_turn_mult": 1.1,
+      "drift_min_speed": 9,
+      "drift_slip_ref": 6,
+      "turbo_max": 100,
+      "turbo_fill_rate": 40,
+      "turbo_drain_rate": 38,
+      "turbo_min_to_start": 20,
+      "turbo_speed_mult": 1.55,
+      "turbo_accel_mult": 2.0,
+      "ram_min_speed_ratio": 0.35,
+      "ram_damage": 28,
+      "turbo_ram_mult": 2.5,
+      "ram_knockback": 14,
+      "ram_speed_loss": 0.15,
+      "turbo_contact_immunity": true,
+      "contact_invuln_s": 0.6,
+      "magnet_radius": 5,
+      "hitbox_radius": 1.5
+    },
+    "upgrades": [
+      {
+        "id": "car_engine",
+        "name": "Moteur affûté",
+        "stat": "max_speed",
+        "per_level": 0.06,
+        "max_level": 5,
+        "curve": "car_upgrade"
+      },
+      {
+        "id": "car_drift",
+        "name": "Pneus de drift",
+        "stat": "turbo_fill_rate",
+        "per_level": 0.12,
+        "max_level": 5,
+        "curve": "car_upgrade"
+      },
+      {
+        "id": "car_turbo",
+        "name": "Réservoir de nitro",
+        "stat": "turbo_max",
+        "per_level": 0.15,
+        "max_level": 5,
+        "curve": "car_upgrade"
+      },
+      {
+        "id": "car_bumper",
+        "name": "Pare-chocs renforcé",
+        "stat": "ram_damage",
+        "per_level": 0.15,
+        "max_level": 5,
+        "curve": "car_upgrade"
+      }
+    ]
+  }
+}
