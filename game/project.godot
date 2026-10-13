@@ -1,0 +1,48 @@
+; Engine configuration file.
+
+config_version=5
+
+[application]
+
+config/name="Drift & Scrap"
+config/description="Jeu d'action incrémental 3/4 low-poly."
+run/main_scene="res://scenes/main/main.tscn"
+config/features=PackedStringArray("4.6", "GL Compatibility")
+config/icon="res://icon.svg"
+
+[autoload]
+
+GameState="*res://scripts/core/game_state.gd"
+
+[display]
+
+window/size/viewport_width=1600
+window/size/viewport_height=900
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/gut/plugin.cfg")
+
+[gui]
+
+common/drop_mouse_on_gui_input_disabled=true
+
+[layer_names]
+
+3d_physics/layer_1="world"
+3d_physics/layer_2="player"
+3d_physics/layer_3="enemies"
+
+[physics]
+
+common/physics_ticks_per_second=60
+3d/physics_engine="GodotPhysics3D"
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+anti_aliasing/quality/msaa_3d=2
+lights_and_shadows/directional_shadow/soft_shadow_filter_quality=2
